@@ -22,6 +22,7 @@ import android.os.SystemClock;
 import android.provider.Settings;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
@@ -96,8 +97,20 @@ public class MainActivity extends Activity implements LocationListener {
 
         MapView mapView = findViewById(R.id.map);
         map = new MapScreen(this, mapView);
+        // لرزش انگشت یا زوم دو انگشتی دنبال‌کردن را قطع نکند؛ فقط کشیدن نقشه
+        int slop = ViewConfiguration.get(this).getScaledTouchSlop() * 3;
+        float[] down = new float[2];
+        boolean[] pinch = new boolean[1];
         mapView.setOnTouchListener((v, e) -> {
-            if (e.getActionMasked() == MotionEvent.ACTION_MOVE) {
+            int action = e.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                down[0] = e.getX();
+                down[1] = e.getY();
+                pinch[0] = false;
+            } else if (e.getPointerCount() > 1) {
+                pinch[0] = true;
+            } else if (action == MotionEvent.ACTION_MOVE && !pinch[0]
+                    && Math.hypot(e.getX() - down[0], e.getY() - down[1]) > slop) {
                 follow = false;
             }
             return false;
@@ -184,13 +197,14 @@ public class MainActivity extends Activity implements LocationListener {
             return;
         }
         lastFix = l;
-        map.showMe(l.getLatitude(), l.getLongitude(), l.hasAccuracy() ? l.getAccuracy() : 0);
-        if (follow) {
-            boolean zoomIn = !centeredOnce || locateRequested;
-            map.center(l.getLatitude(), l.getLongitude(), zoomIn ? closeZoom() : 0);
+        // سر خط فقط با موقعیت دقیق GPS دنبال آدمک می‌رود
+        map.setLiveTail(recordingShown() && isGps(l) && l.getAccuracy() <= TrackFilter.MAX_ACCURACY);
+        if (follow && (!centeredOnce || locateRequested)) {
+            map.center(l.getLatitude(), l.getLongitude(), closeZoom());
             centeredOnce = true;
             locateRequested = false;
         }
+        map.moveMe(l.getLatitude(), l.getLongitude(), l.hasAccuracy() ? l.getAccuracy() : 0, () -> follow);
         refresh();
     }
 
@@ -202,6 +216,31 @@ public class MainActivity extends Activity implements LocationListener {
 
     @Override
     public void onProviderDisabled(String provider) { }
+
+    private boolean recordingShown() {
+        long active = TrackingService.activeTrack(this);
+        return active != 0 && active == shownTrack;
+    }
+
+    /** آخرین موقعیت را به عنوان نقطه دقیق مقصد ثبت می‌کند. */
+    private void addEndPoint(long id) {
+        if (!fresh() || !isGps(lastFix) || lastFix.getAccuracy() > TrackFilter.MAX_ACCURACY) {
+            return;
+        }
+        Db db = Db.get(this);
+        List<Point> points = db.points(id, 0);
+        Db.Track track = db.track(id);
+        if (points.isEmpty() || track == null) {
+            return;
+        }
+        Point last = points.get(points.size() - 1);
+        Point end = TrackingService.toPoint(lastFix);
+        double step = Geo.distance(last.lat, last.lon, end.lat, end.lon);
+        // نوسان هنگام ایستادن مسافت نسازد و پرش دور پذیرفته نشود
+        if (step >= Math.max(TrackFilter.MIN_STEP, end.accuracy * 0.35) && step < 100) {
+            db.addPoint(id, end, track.distance + step);
+        }
+    }
 
     private static boolean isGps(Location l) {
         return LocationManager.GPS_PROVIDER.equals(l.getProvider());
@@ -329,9 +368,13 @@ public class MainActivity extends Activity implements LocationListener {
             new AlertDialog.Builder(this)
                     .setMessage("ثبت این مسیر تمام شود؟")
                     .setPositiveButton("بله، مقصد", (d, w) -> {
+                        addEndPoint(active);
                         TrackingService.finish(this);
                         stopService(new Intent(this, TrackingService.class));
+                        map.setLiveTail(false);
                         showTrack(active);
+                        follow = false;
+                        map.fit(Db.get(this).points(active, 0), closeZoom());
                         refresh();
                     })
                     .setNegativeButton("ادامه حرکت", null)
@@ -518,10 +561,8 @@ public class MainActivity extends Activity implements LocationListener {
                         }
                         showTrack(t.id);
                         List<Point> p = Db.get(this).points(t.id, 0);
-                        if (!p.isEmpty()) {
-                            follow = false;
-                            map.center(p.get(0).lat, p.get(0).lon, closeZoom());
-                        }
+                        follow = false;
+                        map.fit(p, closeZoom());
                     } else if (i == 1) {
                         export("track-" + t.id + ".gpx", "application/gpx+xml",
                                 Geo.gpx(Db.get(this).points(t.id, 0), Collections.<Point>emptyList()));
@@ -674,7 +715,7 @@ public class MainActivity extends Activity implements LocationListener {
     private void showAbout() {
         new AlertDialog.Builder(this)
                 .setIcon(R.drawable.ic_app)
-                .setTitle("رهیاب — نسخه ۲")
+                .setTitle("رهیاب — نسخه ۲٫۱")
                 .setMessage("برنامه‌نویس: عباس رضایی\n\nشماره پشتیبانی: \u200E09118655135\n\nاینستاگرام: \u200Eabbas.rezaeii")
                 .setPositiveButton("تماس با پشتیبانی", (d, w) -> view("tel:09118655135", Intent.ACTION_DIAL))
                 .setNeutralButton("اینستاگرام",

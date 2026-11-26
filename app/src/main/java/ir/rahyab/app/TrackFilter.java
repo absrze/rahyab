@@ -3,7 +3,7 @@ package ir.rahyab.app;
 /** تصمیم می‌گیرد کدام موقعیت GPS وارد خط مسیر شود تا خط «لرزان» و پرشی نشود. */
 final class TrackFilter {
     static final float MAX_ACCURACY = 35f;   // زیر درختان دقت کمتر می‌شود
-    static final double MIN_STEP = 4;        // متر
+    static final double MIN_STEP = 3;        // متر
     static final double MAX_SPEED = 70;      // متر بر ثانیه
     private static final int MAX_JUMPS = 5;
 
@@ -25,7 +25,7 @@ final class TrackFilter {
         }
         double d = Geo.distance(last.lat, last.lon, p.lat, p.lon);
         // هنگام ایستادن، نوسان GPS نباید مسافت بسازد
-        if (d < Math.max(MIN_STEP, p.accuracy * 0.5)) {
+        if (d < Math.max(MIN_STEP, p.accuracy * 0.35)) {
             return -1;
         }
         double seconds = Math.max(1, (p.time - last.time) / 1000.0);

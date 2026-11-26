@@ -1,12 +1,17 @@
 package ir.rahyab.app;
 
+import android.animation.ValueAnimator;
 import android.content.Context;
 import android.graphics.drawable.Drawable;
+import android.view.animation.LinearInterpolator;
 
 import org.mapsforge.core.graphics.Bitmap;
 import org.mapsforge.core.graphics.Paint;
 import org.mapsforge.core.graphics.Style;
+import org.mapsforge.core.model.BoundingBox;
+import org.mapsforge.core.model.Dimension;
 import org.mapsforge.core.model.LatLong;
+import org.mapsforge.core.util.LatLongUtils;
 import org.mapsforge.map.android.graphics.AndroidGraphicFactory;
 import org.mapsforge.map.android.util.AndroidUtil;
 import org.mapsforge.map.android.view.MapView;
@@ -22,6 +27,7 @@ import org.mapsforge.map.rendertheme.internal.MapsforgeThemes;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.BooleanSupplier;
 
 /** همه کارهای رسم نقشه و خط مسیر. */
 final class MapScreen {
@@ -38,6 +44,10 @@ final class MapScreen {
     private Marker end;
     private Marker me;
     private Circle halo;
+    private LatLong shown;          // جای فعلی آدمک روی صفحه
+    private LatLong live;           // سر زنده خط (زیر پای آدمک)
+    private boolean liveTail;
+    private ValueAnimator walk;
     private final List<SatelliteLayer> satellite = new ArrayList<>();
 
     MapScreen(Context context, MapView view) {
@@ -119,6 +129,7 @@ final class MapScreen {
         }
         trackLayers.clear();
         line.clear();
+        liveTail = false;
         border = null;
         core = null;
         start = null;
@@ -143,8 +154,7 @@ final class MapScreen {
             add(trackLayers, core);
             add(trackLayers, start);
         }
-        border.setPoints(line);
-        core.setPoints(line);
+        drawLine();
         LatLong last = line.get(line.size() - 1);
         if (finished) {
             if (end == null) {
@@ -167,9 +177,54 @@ final class MapScreen {
         view.getLayerManager().redrawLayers();
     }
 
+    private void drawLine() {
+        if (core == null) {
+            return;
+        }
+        List<LatLong> points = new ArrayList<>(line);
+        if (liveTail && live != null) {
+            points.add(live);
+        }
+        border.setPoints(points);
+        core.setPoints(points);
+    }
+
+    /** هنگام ثبت مسیر، خط تا زیر پای آدمک ادامه پیدا می‌کند. */
+    void setLiveTail(boolean on) {
+        if (liveTail != on) {
+            liveTail = on;
+            drawLine();
+            view.getLayerManager().redrawLayers();
+        }
+    }
+
+    /** آدمک را نرم به موقعیت تازه می‌برد. follow یعنی نقشه هم همراه او حرکت کند. */
+    void moveMe(double lat, double lon, float accuracy, BooleanSupplier follow) {
+        LatLong to = new LatLong(lat, lon);
+        if (walk != null) {
+            walk.cancel();
+        }
+        LatLong from = shown;
+        // اولین موقعیت یا پرش بزرگ: بدون پویانمایی
+        if (from == null || Geo.distance(from.latitude, from.longitude, lat, lon) > 200) {
+            place(to, accuracy, follow.getAsBoolean());
+            return;
+        }
+        walk = ValueAnimator.ofFloat(0f, 1f);
+        walk.setDuration(900);
+        walk.setInterpolator(new LinearInterpolator());
+        walk.addUpdateListener(animator -> {
+            float t = (float) animator.getAnimatedValue();
+            place(new LatLong(from.latitude + (to.latitude - from.latitude) * t,
+                    from.longitude + (to.longitude - from.longitude) * t), accuracy, follow.getAsBoolean());
+        });
+        walk.start();
+    }
+
     /** آدمک در موقعیت فعلی، با دایره دقت GPS. */
-    void showMe(double lat, double lon, float accuracy) {
-        LatLong at = new LatLong(lat, lon);
+    private void place(LatLong at, float accuracy, boolean follow) {
+        shown = at;
+        live = at;
         if (me == null) {
             Paint fill = AndroidGraphicFactory.INSTANCE.createPaint();
             fill.setColor(0x332196F3);
@@ -185,7 +240,41 @@ final class MapScreen {
             halo.setRadius(accuracy);
             me.setLatLong(at);
         }
+        if (liveTail) {
+            drawLine();
+        }
+        if (follow) {
+            view.setCenter(at);
+        }
         view.getLayerManager().redrawLayers();
+    }
+
+    /** کل مسیر از مبدأ تا مقصد را در صفحه جا می‌دهد. */
+    void fit(List<Point> points, int maxZoom) {
+        if (points.isEmpty()) {
+            return;
+        }
+        double south = 90;
+        double west = 180;
+        double north = -90;
+        double east = -180;
+        for (Point p : points) {
+            south = Math.min(south, p.lat);
+            north = Math.max(north, p.lat);
+            west = Math.min(west, p.lon);
+            east = Math.max(east, p.lon);
+        }
+        BoundingBox box = new BoundingBox(south, west, north, east);
+        Dimension size = view.getModel().mapViewDimension.getDimension();
+        int zoom = maxZoom;
+        if (size != null && (north > south || east > west)) {
+            // فقط بخش میانی صفحه آزاد است؛ پنل‌های بالا و پایین را کنار می‌گذاریم
+            Dimension free = new Dimension(Math.max(1, size.width * 3 / 4), Math.max(1, size.height / 2));
+            zoom = Math.min(maxZoom, LatLongUtils.zoomForBounds(free, box,
+                    view.getModel().displayModel.getTileSize()));
+        }
+        view.setCenter(box.getCenterPoint());
+        view.setZoomLevel((byte) Math.max(3, zoom));
     }
 
     private void add(List<Layer> group, Layer layer) {
@@ -215,6 +304,9 @@ final class MapScreen {
     }
 
     void destroy() {
+        if (walk != null) {
+            walk.cancel();
+        }
         for (SatelliteLayer layer : satellite) {
             layer.close();
         }

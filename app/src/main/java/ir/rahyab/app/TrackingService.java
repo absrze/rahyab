@@ -90,7 +90,7 @@ public class TrackingService extends Service implements LocationListener {
                 filter = new TrackFilter(old.isEmpty() ? null : old.get(old.size() - 1));
             }
             manager = (LocationManager) getSystemService(LOCATION_SERVICE);
-            manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 2000, 0, this);
+            manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, this);
             wakeLock = ((PowerManager) getSystemService(POWER_SERVICE))
                     .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "rahyab:tracking");
             wakeLock.acquire();
