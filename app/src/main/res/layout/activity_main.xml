@@ -9,66 +9,126 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <FrameLayout
+    <LinearLayout
         android:id="@+id/overlay"
         android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:layout_height="match_parent"
+        android:orientation="vertical">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_margin="10dp"
             android:background="@drawable/bg_panel"
+            android:elevation="6dp"
             android:orientation="vertical"
-            android:padding="10dp">
+            android:padding="12dp">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
-                <TextView android:id="@+id/distance" style="@style/Stat" />
-                <TextView android:id="@+id/duration" style="@style/Stat" />
-                <TextView android:id="@+id/speed" style="@style/Stat" />
-                <TextView android:id="@+id/toStart" style="@style/Stat" />
+                <LinearLayout style="@style/Column">
+                    <TextView style="@style/StatLabel" android:text="مسافت" />
+                    <TextView android:id="@+id/distance" style="@style/StatValue" />
+                </LinearLayout>
+                <LinearLayout style="@style/Column">
+                    <TextView style="@style/StatLabel" android:text="زمان" />
+                    <TextView android:id="@+id/duration" style="@style/StatValue" />
+                </LinearLayout>
+                <LinearLayout style="@style/Column">
+                    <TextView style="@style/StatLabel" android:text="سرعت" />
+                    <TextView android:id="@+id/speed" style="@style/StatValue" />
+                </LinearLayout>
+                <LinearLayout style="@style/Column">
+                    <TextView style="@style/StatLabel" android:text="تا مبدأ" />
+                    <TextView android:id="@+id/toStart" style="@style/StatValue" />
+                </LinearLayout>
             </LinearLayout>
 
             <TextView
                 android:id="@+id/coords"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
+                android:layout_marginTop="10dp"
+                android:background="@drawable/bg_chip"
                 android:gravity="center"
-                android:textColor="#C8E6C9"
+                android:padding="6dp"
+                android:textColor="#B2FFE0"
                 android:textDirection="ltr"
-                android:textIsSelectable="true"
-                android:textSize="14sp" />
+                android:textSize="15sp" />
 
             <TextView
                 android:id="@+id/status"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
                 android:gravity="center"
                 android:textColor="#FFE082"
                 android:textSize="12sp" />
         </LinearLayout>
 
         <LinearLayout
-            android:layout_width="wrap_content"
+            android:id="@+id/progressCard"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="end|center_vertical"
-            android:layout_marginEnd="10dp"
-            android:orientation="vertical">
-            <TextView android:id="@+id/zoomIn" style="@style/Tool" android:text="+" android:contentDescription="بزرگ‌نمایی" />
-            <TextView android:id="@+id/zoomOut" style="@style/Tool" android:text="−" android:contentDescription="کوچک‌نمایی" />
-            <TextView android:id="@+id/follow" style="@style/Tool" android:text="◎" android:contentDescription="موقعیت من" />
+            android:layout_marginHorizontal="10dp"
+            android:background="@drawable/bg_panel"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:visibility="gone">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical">
+                <TextView android:id="@+id/progressText" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="#FFFFFF" android:textSize="13sp" />
+                <TextView android:id="@+id/progressCancel" android:layout_width="wrap_content" android:layout_height="wrap_content" android:padding="6dp" android:text="لغو" android:textColor="#FF8A80" android:textStyle="bold" />
+            </LinearLayout>
+            <ProgressBar
+                android:id="@+id/progressBar"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="match_parent"
+                android:layout_height="18dp"
+                android:max="100"
+                android:progressTint="#00E5A0" />
         </LinearLayout>
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="end|bottom"
+                android:layout_marginEnd="12dp"
+                android:clipToPadding="false"
+                android:orientation="vertical"
+                android:paddingBottom="2dp">
+                <ImageView android:id="@+id/layers" style="@style/Tool" android:src="@drawable/ic_layers" android:contentDescription="نوع نقشه" />
+                <TextView android:id="@+id/zoomIn" style="@style/Tool" android:padding="0dp" android:text="+" android:contentDescription="بزرگ‌نمایی" />
+                <TextView android:id="@+id/zoomOut" style="@style/Tool" android:padding="0dp" android:text="−" android:contentDescription="کوچک‌نمایی" />
+                <ImageView android:id="@+id/follow" style="@style/Tool" android:src="@drawable/ic_locate" android:contentDescription="مکان من" />
+            </LinearLayout>
+            <TextView
+                android:id="@+id/credit"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|start"
+                android:layout_marginEnd="74dp"
+                android:background="#99000000"
+                android:paddingHorizontal="5dp"
+                android:textColor="#FFFFFF"
+                android:textDirection="ltr"
+                android:textSize="9sp" />
+        </FrameLayout>
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_gravity="bottom"
+            android:background="@drawable/bg_sheet"
+            android:elevation="10dp"
             android:orientation="vertical"
-            android:padding="10dp">
-
+            android:padding="14dp">
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content">
@@ -76,31 +136,32 @@
                     android:id="@+id/startStop"
                     android:layout_width="0dp"
                     android:layout_height="58dp"
-                    android:layout_marginEnd="6dp"
-                    android:layout_weight="1"
+                    android:layout_marginEnd="10dp"
+                    android:layout_weight="3"
                     android:background="@drawable/bg_start"
                     android:textColor="#FFFFFF"
-                    android:textSize="17sp" />
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
                 <Button
                     android:id="@+id/savePoint"
                     android:layout_width="0dp"
                     android:layout_height="58dp"
-                    android:layout_marginStart="6dp"
-                    android:layout_weight="1"
+                    android:layout_weight="2"
                     android:background="@drawable/bg_save"
-                    android:text="📍 ذخیره مختصات"
+                    android:text="ذخیره مختصات"
                     android:textColor="#FFFFFF"
-                    android:textSize="17sp" />
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
             </LinearLayout>
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp">
-                <Button android:id="@+id/points" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="نقاط" />
-                <Button android:id="@+id/tracks" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="مسیرها" />
-                <Button android:id="@+id/maps" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="نقشه آفلاین" />
+                <TextView android:id="@+id/points" style="@style/Nav" android:drawableTop="@drawable/ic_pin" android:drawablePadding="3dp" android:text="نقاط" android:clickable="true" android:focusable="true" />
+                <TextView android:id="@+id/tracks" style="@style/Nav" android:drawableTop="@drawable/ic_route" android:drawablePadding="3dp" android:text="مسیرها" android:clickable="true" android:focusable="true" />
+                <TextView android:id="@+id/maps" style="@style/Nav" android:drawableTop="@drawable/ic_download" android:drawablePadding="3dp" android:text="نقشه آفلاین" android:clickable="true" android:focusable="true" />
+                <TextView android:id="@+id/about" style="@style/Nav" android:drawableTop="@drawable/ic_info" android:drawablePadding="3dp" android:text="درباره ما" android:clickable="true" android:focusable="true" />
             </LinearLayout>
         </LinearLayout>
-    </FrameLayout>
+    </LinearLayout>
 </FrameLayout>

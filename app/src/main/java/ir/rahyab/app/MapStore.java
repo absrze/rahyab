@@ -4,6 +4,7 @@ import android.app.DownloadManager;
 import android.content.Context;
 import android.database.Cursor;
 import android.net.Uri;
+import android.provider.OpenableColumns;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -60,8 +61,24 @@ final class MapStore {
         }
     }
 
-    /** متن وضعیت دانلود؛ null یعنی دانلودی در جریان نیست. done وقتی نقشه آماده شد اجرا می‌شود. */
-    static String poll(Context c, Runnable done) {
+    static final class Progress {
+        final int percent;      // ‎-1 یعنی نامشخص
+        final String text;
+        final boolean active;
+
+        Progress(int percent, String text, boolean active) {
+            this.percent = percent;
+            this.text = text;
+            this.active = active;
+        }
+    }
+
+    interface Listener {
+        void progress(long copied, long total);
+    }
+
+    /** وضعیت دانلود؛ null یعنی دانلودی در جریان نیست. done وقتی نقشه آماده شد اجرا می‌شود. */
+    static Progress poll(Context c, Runnable done) {
         long id = TrackingService.prefs(c).getLong("download", -1);
         if (id < 0) {
             return null;
@@ -69,7 +86,7 @@ final class MapStore {
         try (Cursor q = manager(c).query(new DownloadManager.Query().setFilterById(id))) {
             if (q == null || !q.moveToFirst()) {
                 cancel(c);
-                return "دانلود لغو شد";
+                return new Progress(-1, "دانلود لغو شد", false);
             }
             int status = q.getInt(q.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));
             if (status == DownloadManager.STATUS_SUCCESSFUL) {
@@ -79,23 +96,37 @@ final class MapStore {
                 manager(c).remove(id);
                 if (ok) {
                     done.run();
-                    return "نقشه آماده شد";
+                    return new Progress(100, "نقشه آماده شد", false);
                 }
-                return "ذخیره نقشه ناموفق بود";
+                return new Progress(-1, "ذخیره نقشه ناموفق بود", false);
             }
             if (status == DownloadManager.STATUS_FAILED) {
                 cancel(c);
-                return "دانلود ناموفق بود؛ اینترنت و فضای خالی را بررسی کنید";
+                return new Progress(-1, "دانلود ناموفق بود؛ اینترنت و فضای خالی را بررسی کنید", false);
             }
             long got = q.getLong(q.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));
             long all = q.getLong(q.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));
-            String progress = all > 0 ? (100 * got / all) + "% از " + (all >> 20) + " MB" : (got >> 20) + " MB";
-            return (status == DownloadManager.STATUS_PAUSED ? "دانلود متوقف (منتظر شبکه): " : "دانلود نقشه: ") + progress;
+            String title = status == DownloadManager.STATUS_PAUSED ? "منتظر شبکه" : "در حال دانلود نقشه";
+            return describe(title, got, all);
         }
     }
 
+    static Progress describe(String title, long got, long all) {
+        int percent = all > 0 ? (int) Math.min(100, 100 * got / all) : -1;
+        String size = String.format(java.util.Locale.US, "%.1f", got / 1048576.0)
+                + (all > 0 ? String.format(java.util.Locale.US, " / %.1f", all / 1048576.0) : "") + " MB";
+        return new Progress(percent, title + (percent >= 0 ? "  " + percent + "%" : "")
+                + "\n\u200E" + size, true);
+    }
+
     /** کپی فایل انتخاب‌شده کاربر؛ در رشته پس‌زمینه صدا زده شود. */
-    static void importFile(Context c, Uri uri) throws IOException {
+    static void importFile(Context c, Uri uri, boolean mbtiles, Listener listener) throws IOException {
+        long total = -1;
+        try (Cursor q = c.getContentResolver().query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {
+            if (q != null && q.moveToFirst() && !q.isNull(0)) {
+                total = q.getLong(0);
+            }
+        }
         File part = new File(dir(c), "import.part");
         try (InputStream in = c.getContentResolver().openInputStream(uri);
              OutputStream out = new FileOutputStream(part)) {
@@ -103,14 +134,46 @@ final class MapStore {
                 throw new IOException("cannot open file");
             }
             byte[] buffer = new byte[1 << 16];
+            long copied = 0;
             int n;
             while ((n = in.read(buffer)) > 0) {
                 out.write(buffer, 0, n);
+                copied += n;
+                listener.progress(copied, total);
             }
+        } catch (IOException e) {
+            part.delete();
+            throw e;
         }
-        if (!install(c, part, "imported.map")) {
+        if (mbtiles) {
+            try {
+                TileProvider.mbtiles(part).close();
+            } catch (RuntimeException e) {
+                part.delete();
+                throw new IOException("not a raster mbtiles file");
+            }
+            // نام تازه تا فایلِ در حال استفاده بازنویسی نشود
+            File target = new File(dir(c), "satellite-" + System.currentTimeMillis() + ".mbtiles");
+            File old = satelliteFile(c);
+            if (!part.renameTo(target)) {
+                throw new IOException("cannot save");
+            }
+            TrackingService.prefs(c).edit().putString("mbtiles", target.getName()).apply();
+            if (old != null) {
+                old.delete();
+            }
+        } else if (!install(c, part, "imported.map")) {
             throw new IOException("not a valid map file");
         }
+    }
+
+    static File satelliteFile(Context c) {
+        String name = TrackingService.prefs(c).getString("mbtiles", null);
+        if (name == null) {
+            return null;
+        }
+        File f = new File(dir(c), name);
+        return f.isFile() ? f : null;
     }
 
     /** فایل را پس از بررسی سرآیند آن جایگزین نقشه فعلی می‌کند. */

@@ -74,6 +74,15 @@ public class TrackingService extends Service implements LocationListener {
                 prefs(this).edit().putLong("active", trackId).apply();
                 distance = 0;
                 filter = new TrackFilter(null);
+                // خط دقیقاً از جایی شروع شود که کاربر دکمه شروع را زده است
+                if (intent != null && intent.hasExtra("lat")) {
+                    Point first = new Point(intent.getDoubleExtra("lat", 0), intent.getDoubleExtra("lon", 0),
+                            intent.getDoubleExtra("alt", Double.NaN), intent.getFloatExtra("acc", 999f),
+                            intent.getLongExtra("time", System.currentTimeMillis()));
+                    if (filter.offer(first) >= 0) {
+                        db.addPoint(trackId, first, 0);
+                    }
+                }
             } else {
                 // ادامه مسیر نیمه‌کاره پس از بسته‌شدن ناگهانی
                 distance = track.distance;

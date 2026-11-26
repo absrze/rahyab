@@ -12,6 +12,7 @@ import org.mapsforge.map.android.util.AndroidUtil;
 import org.mapsforge.map.android.view.MapView;
 import org.mapsforge.map.layer.Layer;
 import org.mapsforge.map.layer.cache.TileCache;
+import org.mapsforge.map.layer.overlay.Circle;
 import org.mapsforge.map.layer.overlay.Marker;
 import org.mapsforge.map.layer.overlay.Polyline;
 import org.mapsforge.map.layer.renderer.TileRendererLayer;
@@ -36,6 +37,8 @@ final class MapScreen {
     private Marker start;
     private Marker end;
     private Marker me;
+    private Circle halo;
+    private final List<SatelliteLayer> satellite = new ArrayList<>();
 
     MapScreen(Context context, MapView view) {
         this.context = context;
@@ -46,14 +49,45 @@ final class MapScreen {
         view.setZoomLevel((byte) 6);
     }
 
-    /** نقشه آفلاین را زیر همه لایه‌ها قرار می‌دهد. */
-    void loadMap(File file) {
+    private void removeBase() {
         if (base != null) {
             view.getLayerManager().getLayers().remove(base);
             base.onDestroy();
             cache.purge();
             base = null;
         }
+        for (SatelliteLayer layer : satellite) {
+            view.getLayerManager().getLayers().remove(layer);
+            layer.close();
+        }
+        satellite.clear();
+    }
+
+    /** تصویر ماهواره‌ای (و در صورت وجود، لایه نام‌ها) را زیر همه لایه‌ها قرار می‌دهد. */
+    void loadSatellite(TileProvider... providers) {
+        removeBase();
+        for (TileProvider provider : providers) {
+            SatelliteLayer layer = new SatelliteLayer(provider);
+            view.getLayerManager().getLayers().add(satellite.size(), layer);
+            layer.setRedraw(() -> view.getLayerManager().redrawLayers());
+            satellite.add(layer);
+        }
+        view.getLayerManager().redrawLayers();
+    }
+
+    /** وقتی کاشی‌ای ناموفق مانده، دوباره رسم می‌کند تا تلاش تازه انجام شود. */
+    void retryTiles() {
+        for (SatelliteLayer layer : satellite) {
+            if (layer.hasFailures()) {
+                view.getLayerManager().redrawLayers();
+                return;
+            }
+        }
+    }
+
+    /** نقشه آفلاین را زیر همه لایه‌ها قرار می‌دهد. */
+    void loadMap(File file) {
+        removeBase();
         MapFile map = new MapFile(file);
         if (cache == null) {
             cache = AndroidUtil.createTileCache(context, "mapcache",
@@ -67,10 +101,10 @@ final class MapScreen {
         view.getLayerManager().redrawLayers();
     }
 
-    void center(double lat, double lon, boolean zoomIn) {
+    void center(double lat, double lon, int zoom) {
         view.setCenter(new LatLong(lat, lon));
-        if (zoomIn) {
-            view.setZoomLevel((byte) 17);
+        if (zoom > 0) {
+            view.setZoomLevel((byte) zoom);
         }
     }
 
@@ -133,12 +167,22 @@ final class MapScreen {
         view.getLayerManager().redrawLayers();
     }
 
-    void showMe(double lat, double lon) {
+    /** آدمک در موقعیت فعلی، با دایره دقت GPS. */
+    void showMe(double lat, double lon, float accuracy) {
         LatLong at = new LatLong(lat, lon);
         if (me == null) {
-            me = marker(at, R.drawable.dot_me);
+            Paint fill = AndroidGraphicFactory.INSTANCE.createPaint();
+            fill.setColor(0x332196F3);
+            fill.setStyle(Style.FILL);
+            halo = new Circle(at, accuracy, fill, paint(0xAA2196F3, 1));
+            Bitmap bitmap = AndroidGraphicFactory.convertToBitmap(context.getDrawable(R.drawable.person));
+            // پای آدمک روی خود نقطه قرار می‌گیرد
+            me = new Marker(at, bitmap, 0, -bitmap.getHeight() / 2);
+            view.getLayerManager().getLayers().add(halo);
             view.getLayerManager().getLayers().add(me);
         } else {
+            halo.setLatLong(at);
+            halo.setRadius(accuracy);
             me.setLatLong(at);
         }
         view.getLayerManager().redrawLayers();
@@ -149,7 +193,9 @@ final class MapScreen {
         view.getLayerManager().getLayers().add(layer);
         // نشانگر موقعیت من همیشه بالاترین لایه بماند
         if (me != null) {
+            view.getLayerManager().getLayers().remove(halo);
             view.getLayerManager().getLayers().remove(me);
+            view.getLayerManager().getLayers().add(halo);
             view.getLayerManager().getLayers().add(me);
         }
     }
@@ -169,6 +215,9 @@ final class MapScreen {
     }
 
     void destroy() {
+        for (SatelliteLayer layer : satellite) {
+            layer.close();
+        }
         view.destroyAll();
         AndroidGraphicFactory.clearResourceMemoryCache();
     }
