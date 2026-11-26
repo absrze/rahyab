@@ -28,7 +28,8 @@ final class SatelliteLayer extends Layer {
     private final ExecutorService pool = Executors.newFixedThreadPool(4);
     private final Set<String> pending = ConcurrentHashMap.newKeySet();
     private final Map<String, Long> failed = new ConcurrentHashMap<>();
-    private final LruCache<String, Bitmap> memory = new LruCache<String, Bitmap>(48 * 1024) {
+    private final LruCache<String, Bitmap> memory = new LruCache<String, Bitmap>(
+            (int) Math.min(128 * 1024, Runtime.getRuntime().maxMemory() / 1024 / 4)) {
         @Override
         protected int sizeOf(String key, Bitmap value) {
             return value.getByteCount() / 1024;
@@ -60,7 +61,7 @@ final class SatelliteLayer extends Layer {
         int x1 = Math.min(count - 1, (int) Math.floor((topLeftPoint.x + canvas.getWidth()) / size));
         int y1 = Math.min(count - 1, (int) Math.floor((topLeftPoint.y + canvas.getHeight()) / size));
         // محافظت در برابر درخواست انبوه وقتی زوم از کمترین زوم فایل خیلی دورتر است
-        if ((long) (x1 - x0 + 1) * (y1 - y0 + 1) > 150) {
+        if ((long) (x1 - x0 + 1) * (y1 - y0 + 1) > 450) {
             return;
         }
         for (int x = x0; x <= x1; x++) {
@@ -95,7 +96,7 @@ final class SatelliteLayer extends Layer {
     private void request(int z, int x, int y) {
         String key = z + "/" + x + "/" + y;
         Long when = failed.get(key);
-        if (closed || pending.size() > 80
+        if (closed || pending.size() > 200
                 || (when != null && SystemClock.elapsedRealtime() - when < RETRY_MS) || !pending.add(key)) {
             return;
         }

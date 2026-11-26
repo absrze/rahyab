@@ -28,6 +28,7 @@ public class TrackingService extends Service implements LocationListener {
     private LocationManager manager;
     private PowerManager.WakeLock wakeLock;
     private TrackFilter filter;
+    private final Smoother smoother = new Smoother();
     private long trackId;
     private double distance;
 
@@ -79,6 +80,9 @@ public class TrackingService extends Service implements LocationListener {
                     Point first = new Point(intent.getDoubleExtra("lat", 0), intent.getDoubleExtra("lon", 0),
                             intent.getDoubleExtra("alt", Double.NaN), intent.getFloatExtra("acc", 999f),
                             intent.getLongExtra("time", System.currentTimeMillis()));
+                    if (first.accuracy <= TrackFilter.MAX_ACCURACY) {
+                        first = smoother.apply(first);
+                    }
                     if (filter.offer(first) >= 0) {
                         db.addPoint(trackId, first, 0);
                     }
@@ -126,6 +130,9 @@ public class TrackingService extends Service implements LocationListener {
             return;
         }
         Point p = toPoint(location);
+        if (p.accuracy <= TrackFilter.MAX_ACCURACY) {
+            p = smoother.apply(p);
+        }
         double step = filter.offer(p);
         if (step >= 0) {
             distance += step;

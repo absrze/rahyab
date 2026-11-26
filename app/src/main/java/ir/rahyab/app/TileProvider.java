@@ -4,7 +4,6 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.graphics.BitmapFactory;
-import android.net.Uri;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -82,19 +81,6 @@ abstract class TileProvider {
         }
     }
 
-    /** سرویس رسمی Esri با کلید خود کاربر؛ فقط آنلاین و بدون ذخیره روی حافظه. */
-    static TileProvider esri(String key, boolean labels) {
-        final String base = labels
-                ? "https://static-map-tiles-api.arcgis.com/arcgis/rest/services/static-basemap-tiles-service/v1/arcgis/imagery/labels/static/tile/"
-                : "https://ibasemaps-api.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/";
-        return new TileProvider(0, 19, labels ? 512 : 256) {
-            @Override
-            byte[] load(int z, int x, int y) throws IOException {
-                return http(base + z + "/" + y + "/" + x + "?token=" + Uri.encode(key));
-            }
-        };
-    }
-
     /** فایل MBTiles تصویری که کاربر خودش آورده است؛ کاملاً آفلاین. */
     static TileProvider mbtiles(File file) {
         final SQLiteDatabase db = SQLiteDatabase.openDatabase(file.getPath(), null,
@@ -164,10 +150,10 @@ abstract class TileProvider {
         HttpURLConnection h = (HttpURLConnection) new URL(address).openConnection();
         h.setConnectTimeout(10000);
         h.setReadTimeout(15000);
-        h.setRequestProperty("User-Agent", "Rahyab/2.0 (Android)");
+        h.setRequestProperty("User-Agent", "Rahyab/3.0 (Android)");
         try {
             String type = h.getContentType();
-            // خطای کلید در Esri ممکن است با کد ۲۰۰ و متن JSON برگردد
+            // پاسخ غیرتصویری (مثلاً صفحه خطا) پذیرفته نمی‌شود
             if (h.getResponseCode() != 200 || type == null || !type.startsWith("image/")) {
                 throw new IOException("tile error " + h.getResponseCode());
             }

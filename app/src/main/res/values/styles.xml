@@ -1,9 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="AppTheme" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+        <item name="android:alertDialogTheme">@style/AppDialog</item>
         <item name="android:colorPrimary">#00695C</item>
         <item name="android:colorAccent">#00897B</item>
         <item name="android:statusBarColor">#0F1B24</item>
+    </style>
+    <style name="AppDialog" parent="android:Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#00E5A0</item>
+        <item name="android:windowBackground">@drawable/bg_dialog_inset</item>
     </style>
     <style name="StatLabel">
         <item name="android:layout_width">match_parent</item>
@@ -26,15 +31,15 @@
         <item name="android:orientation">vertical</item>
     </style>
     <style name="Tool">
-        <item name="android:layout_width">50dp</item>
-        <item name="android:layout_height">50dp</item>
-        <item name="android:layout_marginBottom">10dp</item>
+        <item name="android:layout_width">46dp</item>
+        <item name="android:layout_height">46dp</item>
+        <item name="android:layout_marginBottom">9dp</item>
         <item name="android:background">@drawable/bg_tool</item>
-        <item name="android:padding">13dp</item>
+        <item name="android:padding">11dp</item>
         <item name="android:gravity">center</item>
-        <item name="android:textColor">#00695C</item>
+        <item name="android:textColor">#5CF2C0</item>
         <item name="android:textSize">22sp</item>
-        <item name="android:elevation">5dp</item>
+        <item name="android:elevation">6dp</item>
         <item name="android:clickable">true</item>
         <item name="android:focusable">true</item>
     </style>
@@ -45,7 +50,7 @@
         <item name="android:background">?android:attr/selectableItemBackground</item>
         <item name="android:gravity">center</item>
         <item name="android:padding">6dp</item>
-        <item name="android:textColor">#37474F</item>
-        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">#CFE3EA</item>
+        <item name="android:textSize">11sp</item>
     </style>
 </resources>

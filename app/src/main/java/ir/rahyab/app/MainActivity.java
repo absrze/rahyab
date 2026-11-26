@@ -10,6 +10,7 @@ import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.location.GnssStatus;
 import android.location.Location;
 import android.location.LocationListener;
 import android.location.LocationManager;
@@ -26,6 +27,7 @@ import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -67,6 +69,13 @@ public class MainActivity extends Activity implements LocationListener {
     private String pendingExport;
     private String mapMessage;
     private int ticks;
+    private RotatingFrame frame;
+    private boolean headingUp;
+    private Point target;           // نقطه‌ای که به سمت آن راهنمایی می‌شود
+    private Averager averager;      // فقط وقتی پنجره ذخیره نقطه باز است
+    private Runnable averaging;
+    private int satellitesUsed = -1;
+    private GnssStatus.Callback satellites;
 
     private final Runnable ticker = new Runnable() {
         @Override
@@ -126,6 +135,33 @@ public class MainActivity extends Activity implements LocationListener {
         click(R.id.zoomOut, v -> map.zoom(-1));
         click(R.id.follow, v -> locateMe());
         click(R.id.layers, v -> showLayerMenu());
+        click(R.id.compass, v -> toggleCompass());
+        click(R.id.target, v -> {
+            target = null;
+            map.setTarget(null);
+            refresh();
+        });
+        frame = findViewById(R.id.frame);
+        frame.setListener((degrees, byUser) -> {
+            if (byUser) {
+                headingUp = false;
+            }
+            ((CompassView) findViewById(R.id.compass)).setAngle(degrees);
+            map.setAngle(degrees);
+        });
+        map.setWaypointListener(this::pointMenu);
+        satellites = new GnssStatus.Callback() {
+            @Override
+            public void onSatelliteStatusChanged(GnssStatus status) {
+                int used = 0;
+                for (int i = 0; i < status.getSatelliteCount(); i++) {
+                    if (status.usedInFix(i)) {
+                        used++;
+                    }
+                }
+                satellitesUsed = used;
+            }
+        };
         click(R.id.about, v -> showAbout());
         click(R.id.coords, v -> {
             if (lastFix != null) {
@@ -167,6 +203,7 @@ public class MainActivity extends Activity implements LocationListener {
                     }
                 }
             }
+            locationManager.registerGnssStatusCallback(satellites, handler);
             // اگر سیستم سرویس را بسته باشد، ثبت مسیر را ادامه بده
             if (TrackingService.activeTrack(this) != 0 && !TrackingService.running) {
                 beginTracking(null);
@@ -179,6 +216,7 @@ public class MainActivity extends Activity implements LocationListener {
     protected void onPause() {
         handler.removeCallbacks(ticker);
         locationManager.removeUpdates(this);
+        locationManager.unregisterGnssStatusCallback(satellites);
         super.onPause();
     }
 
@@ -197,6 +235,13 @@ public class MainActivity extends Activity implements LocationListener {
             return;
         }
         lastFix = l;
+        if (averager != null && isGps(l) && fresh() && averager.add(TrackingService.toPoint(l))) {
+            averaging.run();
+        }
+        // هنگام حرکت، نقشه رو به جلو می‌چرخد
+        if (headingUp && isGps(l) && l.hasBearing() && l.getSpeed() > 0.8f) {
+            frame.rotateTo(-l.getBearing());
+        }
         // سر خط فقط با موقعیت دقیق GPS دنبال آدمک می‌رود
         map.setLiveTail(recordingShown() && isGps(l) && l.getAccuracy() <= TrackFilter.MAX_ACCURACY);
         if (follow && (!centeredOnce || locateRequested)) {
@@ -216,6 +261,25 @@ public class MainActivity extends Activity implements LocationListener {
 
     @Override
     public void onProviderDisabled(String provider) { }
+
+    /** لمس قطب‌نما: اگر نقشه چرخیده شمال بالا؛ وگرنه جهت حرکت بالا. */
+    private void toggleCompass() {
+        if (headingUp || Math.abs(frame.angle()) > 1) {
+            headingUp = false;
+            frame.rotateTo(0);
+            toast("شمال بالای نقشه");
+        } else {
+            headingUp = true;
+            toast("هنگام حرکت، نقشه رو به جلو می‌چرخد");
+        }
+    }
+
+    private void fitRoute(List<Point> points) {
+        follow = false;
+        headingUp = false;
+        frame.rotateTo(0);
+        map.fit(points, closeZoom(), frame.getWidth(), frame.getHeight());
+    }
 
     private boolean recordingShown() {
         long active = TrackingService.activeTrack(this);
@@ -302,7 +366,21 @@ public class MainActivity extends Activity implements LocationListener {
         text(R.id.speed, String.format(java.util.Locale.US, "%.1f km/h", kmh));
         text(R.id.toStart, (origin == null || lastFix == null ? "—"
                 : Geo.length(Geo.distance(origin.lat, origin.lon, lastFix.getLatitude(), lastFix.getLongitude()))));
-        text(R.id.coords, lastFix == null ? "—" : Geo.coords(lastFix.getLatitude(), lastFix.getLongitude()));
+        text(R.id.coords, lastFix == null ? "—" : "⧉  " + Geo.coords(lastFix.getLatitude(), lastFix.getLongitude()));
+        text(R.id.altitude, fresh() && lastFix.hasAltitude() ? Math.round(lastFix.getAltitude()) + " m" : "—");
+        text(R.id.average, time > 10_000
+                ? String.format(java.util.Locale.US, "%.1f km/h", distance / (time / 1000.0) * 3.6) : "—");
+        text(R.id.satellites, fresh() && satellitesUsed >= 0 ? String.valueOf(satellitesUsed) : "—");
+        findViewById(R.id.target).setVisibility(target == null ? View.GONE : View.VISIBLE);
+        if (target != null) {
+            String away = "…";
+            if (lastFix != null) {
+                double d = Geo.distance(lastFix.getLatitude(), lastFix.getLongitude(), target.lat, target.lon);
+                away = "\u200E" + Geo.length(d) + "\u200F  به سمت " + Geo.direction(
+                        Geo.bearing(lastFix.getLatitude(), lastFix.getLongitude(), target.lat, target.lon));
+            }
+            text(R.id.target, "🎯 " + target.name + ": " + away + "   ✕");
+        }
 
         String gps;
         if (!hasLocationPermission()) {
@@ -334,7 +412,7 @@ public class MainActivity extends Activity implements LocationListener {
         text(R.id.status, mapMessage == null ? gps : gps + "\n" + mapMessage);
 
         Button b = findViewById(R.id.startStop);
-        b.setText(active != 0 ? "■ پایان حرکت" : "▶ شروع حرکت");
+        b.setText(active != 0 ? "■\nپایان" : "▶\nشروع");
         b.setBackgroundResource(active != 0 ? R.drawable.bg_stop : R.drawable.bg_start);
     }
 
@@ -373,8 +451,7 @@ public class MainActivity extends Activity implements LocationListener {
                         stopService(new Intent(this, TrackingService.class));
                         map.setLiveTail(false);
                         showTrack(active);
-                        follow = false;
-                        map.fit(Db.get(this).points(active, 0), closeZoom());
+                        fitRoute(Db.get(this).points(active, 0));
                         refresh();
                     })
                     .setNegativeButton("ادامه حرکت", null)
@@ -458,25 +535,51 @@ public class MainActivity extends Activity implements LocationListener {
 
     // ---------- نقاط ذخیره‌شده ----------
 
+    /** تا وقتی پنجره باز است، موقعیت‌ها میانگین گرفته می‌شوند تا نقطه دقیق‌تر شود. */
     private void savePoint() {
         if (!fresh() || !isGps(lastFix)) {
             toast("هنوز موقعیت تازه‌ای از GPS دریافت نشده است");
             return;
         }
-        // مختصات همان لحظه لمس دکمه
-        Point p = TrackingService.toPoint(lastFix);
+        // مختصات لحظه لمس دکمه؛ اگر دقت ضعیف باشد همین ذخیره می‌شود
+        Point atPress = TrackingService.toPoint(lastFix);
+        Averager samples = new Averager();
+        samples.add(atPress);
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        int pad = Math.round(20 * getResources().getDisplayMetrics().density);
+        box.setPadding(pad, pad / 2, pad, 0);
+        TextView info = new TextView(this);
+        info.setTextSize(14);
         EditText name = new EditText(this);
         name.setText("نقطه " + (Db.get(this).waypoints().size() + 1));
         name.setSelectAllOnFocus(true);
+        box.addView(info);
+        box.addView(name);
+
+        averager = samples;
+        averaging = () -> {
+            Point p = samples.result() == null ? atPress : samples.result();
+            info.setText("\u200E" + Geo.coords(p.lat, p.lon) + "\nدقت: ±" + Math.round(p.accuracy)
+                    + " متر | نمونه‌ها: " + samples.count + "\nبرای دقت بیشتر چند ثانیه بی‌حرکت بمانید.");
+        };
+        averaging.run();
         new AlertDialog.Builder(this)
-                .setTitle(Geo.coords(p.lat, p.lon) + "  (±" + Math.round(p.accuracy) + " m)")
-                .setView(name)
+                .setTitle("📍 ذخیره مختصات")
+                .setView(box)
                 .setPositiveButton("ذخیره", (d, w) -> {
+                    Point p = samples.result() == null ? atPress : samples.result();
                     Db.get(this).addWaypoint(name.getText().toString().trim(), p);
                     map.showWaypoints(Db.get(this).waypoints());
                     toast("ذخیره شد");
                 })
                 .setNegativeButton("انصراف", null)
+                .setOnDismissListener(d -> {
+                    if (averager == samples) {
+                        averager = null;
+                    }
+                })
                 .show();
     }
 
@@ -486,45 +589,62 @@ public class MainActivity extends Activity implements LocationListener {
             toast("هنوز نقطه‌ای ذخیره نشده است");
             return;
         }
-        String[] items = new String[points.size()];
-        for (int i = 0; i < items.length; i++) {
-            Point p = points.get(i);
-            items[i] = p.name + "\n‎" + Geo.coords(p.lat, p.lon);
-        }
-        new AlertDialog.Builder(this)
-                .setTitle("نقاط ذخیره‌شده")
-                .setItems(items, (d, i) -> pointMenu(points.get(i)))
-                .setPositiveButton("خروجی اکسل (CSV)", (d, w) -> export("points.csv", "text/csv", Geo.csv(points)))
-                .setNeutralButton("خروجی GPX", (d, w) -> export("points.gpx", "application/gpx+xml",
+        Sheet sheet = new Sheet(this, "نقاط ذخیره‌شده", points.size() + " نقطه");
+        sheet.row("📤", "خروجی همه نقاط", "اکسل، GPX یا گوگل ارث", () -> new Sheet(this, "خروجی نقاط", null)
+                .row("📊", "اکسل (CSV)", null, () -> export("points.csv", "text/csv", Geo.csv(points)))
+                .row("🧭", "GPX", null, () -> export("points.gpx", "application/gpx+xml",
                         Geo.gpx(Collections.<Point>emptyList(), points)))
-                .setNegativeButton("بستن", null)
-                .show();
+                .row("🌍", "گوگل ارث (KML)", null, () -> export("points.kml",
+                        "application/vnd.google-earth.kml+xml", Geo.kml(Collections.<Point>emptyList(), points)))
+                .show());
+        for (Point p : points) {
+            sheet.row("📍", p.name, "\u200E" + Geo.coords(p.lat, p.lon), () -> pointMenu(p));
+        }
+        sheet.show();
     }
 
     private void pointMenu(Point p) {
         String c = Geo.coords(p.lat, p.lon);
-        String altitude = Double.isNaN(p.alt) ? "" : "، ارتفاع GPS " + Math.round(p.alt) + " m";
-        String[] items = {"نمایش روی نقشه", "کپی مختصات", "ارسال برای دیگران", "حذف"};
-        new AlertDialog.Builder(this)
-                .setTitle(p.name + "\n‎" + c + "\n±" + Math.round(p.accuracy) + " m" + altitude)
-                .setItems(items, (d, i) -> {
-                    if (i == 0) {
-                        follow = false;
-                        map.center(p.lat, p.lon, closeZoom());
-                    } else if (i == 1) {
-                        copy(c);
-                    } else if (i == 2) {
-                        Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
-                                .putExtra(Intent.EXTRA_TEXT, p.name + "\n" + c);
-                        startActivity(Intent.createChooser(send, "ارسال"));
-                    } else {
-                        confirm("این نقطه حذف شود؟", () -> {
-                            Db.get(this).deleteWaypoint(p.id);
-                            map.showWaypoints(Db.get(this).waypoints());
-                        });
-                    }
+        StringBuilder detail = new StringBuilder("\u200E" + c + "\n\u200Fدقت ±" + Math.round(p.accuracy) + " متر");
+        if (!Double.isNaN(p.alt)) {
+            detail.append(" | ارتفاع ").append(Math.round(p.alt)).append(" متر");
+        }
+        if (lastFix != null) {
+            detail.append("\nفاصله تا شما: \u200E").append(Geo.length(
+                    Geo.distance(lastFix.getLatitude(), lastFix.getLongitude(), p.lat, p.lon)));
+        }
+        new Sheet(this, p.name, detail.toString())
+                .row("📋", "کپی مختصات", null, () -> copy(c))
+                .row("🎯", "راهنمایی تا این نقطه", "خط‌چین، فاصله و سمت مستقیم", () -> {
+                    target = p;
+                    map.setTarget(p);
+                    refresh();
                 })
+                .row("🗺", "نمایش روی نقشه", null, () -> {
+                    follow = false;
+                    map.center(p.lat, p.lon, closeZoom());
+                })
+                .row("🌍", "باز کردن در برنامه نقشه گوشی", "مثل گوگل مپ (نیازمند همان برنامه)",
+                        () -> openExternal(p.lat, p.lon, p.name))
+                .row("✉", "ارسال برای دیگران", null, () -> {
+                    Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain")
+                            .putExtra(Intent.EXTRA_TEXT, p.name + "\n" + c);
+                    startActivity(Intent.createChooser(send, "ارسال"));
+                })
+                .row("🗑", "حذف", null, () -> confirm("این نقطه حذف شود؟", () -> {
+                    Db.get(this).deleteWaypoint(p.id);
+                    if (target != null && target.id == p.id) {
+                        target = null;
+                        map.setTarget(null);
+                    }
+                    map.showWaypoints(Db.get(this).waypoints());
+                }))
                 .show();
+    }
+
+    private void openExternal(double lat, double lon, String name) {
+        String c = String.format(java.util.Locale.US, "%.6f,%.6f", lat, lon);
+        view("geo:" + c + "?q=" + c + "(" + Uri.encode(name) + ")", Intent.ACTION_VIEW);
     }
 
     // ---------- تاریخچه مسیرها ----------
@@ -536,48 +656,45 @@ public class MainActivity extends Activity implements LocationListener {
             return;
         }
         DateFormat format = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT);
-        String[] items = new String[tracks.size()];
-        for (int i = 0; i < items.length; i++) {
-            Db.Track t = tracks.get(i);
-            items[i] = format.format(new Date(t.start)) + "\n" + Geo.length(t.distance)
+        Sheet sheet = new Sheet(this, "مسیرهای من", tracks.size() + " مسیر");
+        for (Db.Track t : tracks) {
+            String when = format.format(new Date(t.start));
+            String info = Geo.length(t.distance)
                     + (t.finish == 0 ? " (در حال ثبت)" : "  |  " + Geo.duration(t.finish - t.start));
+            sheet.row("🥾", when, "\u200E" + info, () -> trackMenu(t, when));
         }
-        new AlertDialog.Builder(this)
-                .setTitle("مسیرها")
-                .setItems(items, (d, i) -> trackMenu(tracks.get(i)))
-                .setNegativeButton("بستن", null)
-                .show();
+        sheet.show();
     }
 
-    private void trackMenu(Db.Track t) {
-        String[] items = {"نمایش روی نقشه", "خروجی GPX", "حذف"};
-        new AlertDialog.Builder(this)
-                .setItems(items, (d, i) -> {
-                    boolean recording = TrackingService.activeTrack(this) != 0;
-                    if (i == 0) {
-                        if (recording && t.finish != 0) {
-                            toast("ابتدا حرکت فعلی را تمام کنید");
-                            return;
-                        }
-                        showTrack(t.id);
-                        List<Point> p = Db.get(this).points(t.id, 0);
-                        follow = false;
-                        map.fit(p, closeZoom());
-                    } else if (i == 1) {
-                        export("track-" + t.id + ".gpx", "application/gpx+xml",
-                                Geo.gpx(Db.get(this).points(t.id, 0), Collections.<Point>emptyList()));
-                    } else if (t.finish == 0) {
-                        toast("مسیر در حال ثبت حذف نمی‌شود");
-                    } else {
-                        confirm("این مسیر حذف شود؟", () -> {
-                            Db.get(this).deleteTrack(t.id);
-                            if (shownTrack == t.id) {
-                                map.clearTrack();
-                                shownTrack = 0;
-                                origin = null;
-                            }
-                        });
+    private void trackMenu(Db.Track t, String title) {
+        new Sheet(this, title, "\u200E" + Geo.length(t.distance))
+                .row("🗺", "نمایش کل مسیر روی نقشه", null, () -> {
+                    if (TrackingService.activeTrack(this) != 0 && t.finish != 0) {
+                        toast("ابتدا حرکت فعلی را تمام کنید");
+                        return;
                     }
+                    showTrack(t.id);
+                    fitRoute(Db.get(this).points(t.id, 0));
+                })
+                .row("🌍", "خروجی گوگل ارث (KML)", "مسیر را در گوگل ارث باز کنید", () -> export(
+                        "track-" + t.id + ".kml", "application/vnd.google-earth.kml+xml",
+                        Geo.kml(Db.get(this).points(t.id, 0), Collections.<Point>emptyList())))
+                .row("🧭", "خروجی GPX", null, () -> export("track-" + t.id + ".gpx", "application/gpx+xml",
+                        Geo.gpx(Db.get(this).points(t.id, 0), Collections.<Point>emptyList())))
+                .row("🗑", "حذف", null, () -> {
+                    Db.Track now = Db.get(this).track(t.id);
+                    if (now == null || now.finish == 0) {
+                        toast("مسیر در حال ثبت حذف نمی‌شود");
+                        return;
+                    }
+                    confirm("این مسیر حذف شود؟", () -> {
+                        Db.get(this).deleteTrack(t.id);
+                        if (shownTrack == t.id) {
+                            map.clearTrack();
+                            shownTrack = 0;
+                            origin = null;
+                        }
+                    });
                 })
                 .show();
     }
@@ -595,13 +712,9 @@ public class MainActivity extends Activity implements LocationListener {
         String credit = "";
         try {
             File satellite = MapStore.satelliteFile(this);
-            String key = TrackingService.prefs(this).getString("esriKey", "");
             if ("mbtiles".equals(layer) && satellite != null) {
                 map.loadSatellite(TileProvider.mbtiles(satellite));
                 credit = "Offline imagery file";
-            } else if ("esri".equals(layer) && !key.isEmpty()) {
-                map.loadSatellite(TileProvider.esri(key, false), TileProvider.esri(key, true));
-                credit = "Powered by Esri | Esri, Maxar, Earthstar Geographics";
             } else if ("vector".equals(layer)) {
                 File file = MapStore.current(this);
                 if (file == null) {
@@ -621,50 +734,18 @@ public class MainActivity extends Activity implements LocationListener {
     }
 
     private void showLayerMenu() {
-        String[] items = {"🛰 ماهواره‌ای رایگان (جزئیات کم)", "🛰 ماهواره‌ای دقیق با نام خیابان (آنلاین، کلید Esri)",
-                "💾 ماهواره‌ای آفلاین (فایل MBTiles)", "🗺 نقشه خیابانی آفلاین"};
-        new AlertDialog.Builder(this)
-                .setTitle("نوع نقشه")
-                .setItems(items, (d, i) -> {
-                    if (i == 0) {
-                        setLayer("sentinel");
-                    } else if (i == 1) {
-                        askEsriKey();
-                    } else if (i == 2) {
-                        if (MapStore.satelliteFile(this) == null) {
-                            pickSatelliteFile();
-                        } else {
-                            new AlertDialog.Builder(this)
-                                    .setMessage("فایل ماهواره‌ای آفلاین")
-                                    .setPositiveButton("نمایش", (d2, w) -> setLayer("mbtiles"))
-                                    .setNeutralButton("فایل تازه", (d2, w) -> pickSatelliteFile())
-                                    .show();
-                        }
+        new Sheet(this, "نوع نقشه", null)
+                .row("🛰", "ماهواره‌ای رایگان", "جزئیات کم (دقت ۱۰ متر)", () -> setLayer("sentinel"))
+                .row("💾", "ماهواره‌ای آفلاین", "از فایل MBTiles شما", () -> {
+                    if (MapStore.satelliteFile(this) == null) {
+                        pickSatelliteFile();
                     } else {
-                        setLayer("vector");
+                        setLayer("mbtiles");
                     }
                 })
-                .show();
-    }
-
-    private void askEsriKey() {
-        EditText key = new EditText(this);
-        key.setSingleLine(true);
-        key.setHint("API key");
-        key.setText(TrackingService.prefs(this).getString("esriKey", ""));
-        new AlertDialog.Builder(this)
-                .setTitle("کلید ArcGIS (از developers.arcgis.com با دسترسی Basemaps)")
-                .setView(key)
-                .setPositiveButton("نمایش", (d, w) -> {
-                    String value = key.getText().toString().trim();
-                    TrackingService.prefs(this).edit().putString("esriKey", value).apply();
-                    if (value.isEmpty()) {
-                        toast("کلید وارد نشده است");
-                    } else {
-                        setLayer("esri");
-                    }
-                })
-                .setNegativeButton("انصراف", null)
+                .row("🗺", "نقشه خیابانی آفلاین", "واضح در هر زوم", () -> setLayer("vector"))
+                .row("🌍", "این محل در برنامه نقشه گوشی", "برای دیدن تصویر ماهواره‌ای در برنامه دیگر", () ->
+                        openExternal(map.center().latitude, map.center().longitude, "Rahyab"))
                 .show();
     }
 
@@ -684,43 +765,32 @@ public class MainActivity extends Activity implements LocationListener {
             toast("یک دانلود در جریان است");
             return;
         }
-        String[] items = {"دانلود نقشه خیابانی ایران (حدود ۳۰۰ مگابایت)", "دانلود از نشانی دلخواه (کشور دیگر)",
-                "انتخاب فایل ‎.map از گوشی", "انتخاب تصویر ماهواره‌ای آفلاین (MBTiles)"};
-        new AlertDialog.Builder(this)
-                .setTitle("نقشه آفلاین")
-                .setItems(items, (d, i) -> {
-                    if (i == 0) {
-                        download(MapStore.IRAN_URL);
-                    } else if (i == 1) {
-                        EditText url = new EditText(this);
-                        url.setText("https://download.mapsforge.org/maps/v5/");
-                        new AlertDialog.Builder(this)
-                                .setTitle("نشانی کامل فایل ‎.map")
-                                .setView(url)
-                                .setPositiveButton("دانلود", (d2, w) -> download(url.getText().toString().trim()))
-                                .setNegativeButton("انصراف", null)
-                                .show();
-                    } else if (i == 2) {
-                        open(new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                                .addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_IMPORT);
-                    } else {
-                        pickSatelliteFile();
-                    }
+        new Sheet(this, "نقشه آفلاین", "برای استفاده بدون اینترنت")
+                .row("⬇", "دانلود نقشه خیابانی ایران", "حدود ۳۰۰ مگابایت", () -> download(MapStore.IRAN_URL))
+                .row("🌐", "دانلود از نشانی دلخواه", "کشور دیگر", () -> {
+                    EditText url = new EditText(this);
+                    url.setText("https://download.mapsforge.org/maps/v5/");
+                    new AlertDialog.Builder(this)
+                            .setTitle("نشانی کامل فایل ‎.map")
+                            .setView(url)
+                            .setPositiveButton("دانلود", (d, w) -> download(url.getText().toString().trim()))
+                            .setNegativeButton("انصراف", null)
+                            .show();
                 })
+                .row("📂", "انتخاب فایل ‎.map از گوشی", null, () -> open(new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                        .addCategory(Intent.CATEGORY_OPENABLE).setType("*/*"), REQ_IMPORT))
+                .row("🛰", "انتخاب تصویر ماهواره‌ای آفلاین", "فایل MBTiles", this::pickSatelliteFile)
                 .show();
     }
 
     // ---------- درباره ما ----------
 
     private void showAbout() {
-        new AlertDialog.Builder(this)
-                .setIcon(R.drawable.ic_app)
-                .setTitle("رهیاب — نسخه ۲٫۱")
-                .setMessage("برنامه‌نویس: عباس رضایی\n\nشماره پشتیبانی: \u200E09118655135\n\nاینستاگرام: \u200Eabbas.rezaeii")
-                .setPositiveButton("تماس با پشتیبانی", (d, w) -> view("tel:09118655135", Intent.ACTION_DIAL))
-                .setNeutralButton("اینستاگرام",
-                        (d, w) -> view("https://www.instagram.com/abbas.rezaeii/", Intent.ACTION_VIEW))
-                .setNegativeButton("بستن", null)
+        new Sheet(this, "رهیاب — نسخه ۳", "برنامه‌نویس: عباس رضایی")
+                .row("📞", "تماس با پشتیبانی", "\u200E09118655135",
+                        () -> view("tel:09118655135", Intent.ACTION_DIAL))
+                .row("📸", "اینستاگرام", "\u200Eabbas.rezaeii",
+                        () -> view("https://www.instagram.com/abbas.rezaeii/", Intent.ACTION_VIEW))
                 .show();
     }
 
