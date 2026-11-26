@@ -156,7 +156,7 @@ public class MainActivity extends Activity implements LocationListener {
             }
             // اگر سیستم سرویس را بسته باشد، ثبت مسیر را ادامه بده
             if (TrackingService.activeTrack(this) != 0 && !TrackingService.running) {
-                startService(null);
+                beginTracking(null);
             }
         }
         handler.post(ticker);
@@ -347,19 +347,19 @@ public class MainActivity extends Activity implements LocationListener {
         } else {
             follow = true;
             if (fresh() && isGps(lastFix) && lastFix.getAccuracy() <= TrackFilter.MAX_ACCURACY) {
-                startService(lastFix);
+                beginTracking(lastFix);
                 map.center(lastFix.getLatitude(), lastFix.getLongitude(), closeZoom());
             } else {
                 new AlertDialog.Builder(this)
                         .setMessage("GPS هنوز مکان دقیق شما را پیدا نکرده است. اگر الان شروع کنید، خط از اولین مکان دقیق رسم می‌شود.")
                         .setPositiveButton("صبر می‌کنم", null)
-                        .setNegativeButton("همین حالا شروع کن", (d, w) -> startService(null))
+                        .setNegativeButton("همین حالا شروع کن", (d, w) -> beginTracking(null))
                         .show();
             }
         }
     }
 
-    private void startService(Location from) {
+    private void beginTracking(Location from) {
         Intent i = new Intent(this, TrackingService.class);
         if (from != null) {
             i.putExtra("lat", from.getLatitude()).putExtra("lon", from.getLongitude())
