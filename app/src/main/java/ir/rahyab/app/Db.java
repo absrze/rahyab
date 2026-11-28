@@ -21,7 +21,7 @@ final class Db extends SQLiteOpenHelper {
     }
 
     private Db(Context c) {
-        super(c, "rahyab.db", null, 1);
+        super(c, "rahyab.db", null, 2);
     }
 
     @Override
@@ -30,10 +30,70 @@ final class Db extends SQLiteOpenHelper {
         db.execSQL("CREATE TABLE points(id INTEGER PRIMARY KEY AUTOINCREMENT, track INTEGER, lat REAL, lon REAL, alt REAL, acc REAL, time INTEGER)");
         db.execSQL("CREATE INDEX points_track ON points(track)");
         db.execSQL("CREATE TABLE waypoints(id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, lat REAL, lon REAL, alt REAL, acc REAL, time INTEGER)");
+        createHazards(db);
+    }
+
+    private static void createHazards(SQLiteDatabase db) {
+        // osm صفر یعنی گزارش خود کاربر
+        db.execSQL("CREATE TABLE hazards(id INTEGER PRIMARY KEY AUTOINCREMENT, osm INTEGER, type INTEGER, lat REAL, lon REAL, speed INTEGER)");
+        db.execSQL("CREATE INDEX hazards_place ON hazards(lat, lon)");
     }
 
     @Override
-    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) { }
+    public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
+        if (oldVersion < 2) {
+            createHazards(db);
+        }
+    }
+
+    void addHazard(long osm, int type, double lat, double lon, int speed) {
+        ContentValues v = new ContentValues();
+        v.put("osm", osm);
+        v.put("type", type);
+        v.put("lat", lat);
+        v.put("lon", lon);
+        v.put("speed", speed);
+        getWritableDatabase().insertOrThrow("hazards", null, v);
+    }
+
+    /** داده تازه OSM را جایگزین قبلیِ همان محدوده می‌کند؛ گزارش‌های کاربر می‌مانند. */
+    void replaceOsmHazards(double lat, double lon, List<Hazard> list) {
+        SQLiteDatabase db = getWritableDatabase();
+        db.beginTransaction();
+        try {
+            for (Hazard old : hazardsNear(lat, lon, HazardStore.RADIUS)) {
+                if (!old.mine && Geo.distance(lat, lon, old.lat, old.lon) <= HazardStore.RADIUS) {
+                    deleteHazard(old.id);
+                }
+            }
+            for (Hazard h : list) {
+                db.delete("hazards", "osm=?", args(h.id));
+                addHazard(h.id, h.type, h.lat, h.lon, h.limit);
+            }
+            db.setTransactionSuccessful();
+        } finally {
+            db.endTransaction();
+        }
+    }
+
+    List<Hazard> hazardsNear(double lat, double lon, double meters) {
+        double dLat = meters / 111000;
+        double dLon = dLat / Math.max(0.2, Math.cos(Math.toRadians(lat)));
+        List<Hazard> list = new ArrayList<>();
+        try (Cursor c = getReadableDatabase().rawQuery(
+                "SELECT id,osm,type,lat,lon,speed FROM hazards WHERE lat BETWEEN " + (lat - dLat) + " AND "
+                        + (lat + dLat) + " AND lon BETWEEN " + (lon - dLon) + " AND " + (lon + dLon), null)) {
+            while (c.moveToNext()) {
+                list.add(new Hazard(c.getLong(0), c.getInt(2), c.getDouble(3), c.getDouble(4), c.getInt(5),
+                        c.getLong(1) == 0));
+            }
+        }
+        return list;
+    }
+
+    void deleteHazard(long id) {
+        getWritableDatabase().delete("hazards", "id=?", args(id));
+    }
 
     static final class Track {
         long id;

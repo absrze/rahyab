@@ -86,6 +86,20 @@
         </LinearLayout>
 
         <TextView
+            android:id="@+id/alert"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="10dp"
+            android:layout_marginBottom="8dp"
+            android:elevation="8dp"
+            android:gravity="center"
+            android:padding="12dp"
+            android:textColor="#FFFFFF"
+            android:textSize="19sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/target"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -135,12 +149,28 @@
                 android:clipToPadding="false"
                 android:orientation="vertical"
                 android:paddingBottom="2dp">
+                <ImageView android:id="@+id/mode" style="@style/Tool" android:src="@drawable/ic_walk" android:contentDescription="حالت پیاده یا ماشین" />
                 <ImageView android:id="@+id/layers" style="@style/Tool" android:src="@drawable/ic_layers" android:contentDescription="نوع نقشه" />
                 <ir.rahyab.app.CompassView android:id="@+id/compass" style="@style/Tool" android:padding="0dp" android:contentDescription="قطب‌نما" />
                 <TextView android:id="@+id/zoomIn" style="@style/Tool" android:padding="0dp" android:text="+" android:contentDescription="بزرگ‌نمایی" />
                 <TextView android:id="@+id/zoomOut" style="@style/Tool" android:padding="0dp" android:text="−" android:contentDescription="کوچک‌نمایی" />
                 <ImageView android:id="@+id/follow" style="@style/Tool" android:src="@drawable/ic_locate" android:contentDescription="مکان من" />
             </LinearLayout>
+            <TextView
+                android:id="@+id/speedometer"
+                android:layout_width="92dp"
+                android:layout_height="92dp"
+                android:layout_gravity="bottom|start"
+                android:layout_marginStart="12dp"
+                android:layout_marginBottom="86dp"
+                android:background="@drawable/bg_speed"
+                android:elevation="6dp"
+                android:gravity="center"
+                android:textColor="#FFFFFF"
+                android:textDirection="ltr"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
             <Button
                 android:id="@+id/savePoint"
                 android:layout_width="wrap_content"

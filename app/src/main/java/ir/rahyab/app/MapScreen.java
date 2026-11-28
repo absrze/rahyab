@@ -60,6 +60,11 @@ final class MapScreen {
     private float angle;
     private float iconAngle;
     private boolean paused;         // هنگام چرخش، نقشه دوباره رسم نمی‌شود
+    private final List<Layer> hazardLayers = new ArrayList<>();
+    private List<Hazard> hazards = new ArrayList<>();
+    private Consumer<Hazard> hazardTap;
+    private boolean car;
+    private float heading;
 
     MapScreen(Context context, MapView view) {
         this.context = context;
@@ -206,14 +211,11 @@ final class MapScreen {
         if (active) {
             return;
         }
-        if (Math.abs(RotatingFrame.normalize(angle - iconAngle)) >= 1) {
+        if (Math.abs(RotatingFrame.normalize(angle - iconAngle)) >= 6 || (angle == 0 && iconAngle != 0)) {
             iconAngle = angle;
             showWaypoints(waypoints);
-            if (me != null) {
-                view.getLayerManager().getLayers().remove(me);
-                me = personMarker(shown);
-                view.getLayerManager().getLayers().add(me);
-            }
+            showHazards(hazards);
+            refreshMe();
         }
         redraw();
     }
@@ -222,6 +224,91 @@ final class MapScreen {
         if (!paused) {
             view.getLayerManager().redrawLayers();
         }
+    }
+
+    private void refreshMe() {
+        if (me != null) {
+            view.getLayerManager().getLayers().remove(me);
+            me = meMarker(shown);
+            view.getLayerManager().getLayers().add(me);
+        }
+    }
+
+    /** آیکون موقعیت: آدمک در حالت پیاده، خودرو در حالت ماشین. */
+    void setVehicle(boolean on) {
+        car = on;
+        refreshMe();
+        redraw();
+    }
+
+    /** جهت حرکت خودرو بر حسب درجه از شمال. */
+    void setHeading(float degrees) {
+        if (Math.abs(RotatingFrame.normalize(degrees - heading)) >= 5) {
+            heading = degrees;
+            if (car) {
+                refreshMe();
+                redraw();
+            }
+        }
+    }
+
+    private Marker meMarker(LatLong at) {
+        if (!car) {
+            return personMarker(at);
+        }
+        Drawable drawable = context.getDrawable(R.drawable.car);
+        int w = drawable.getIntrinsicWidth();
+        int h = drawable.getIntrinsicHeight();
+        int size = (int) Math.ceil(Math.hypot(w, h));
+        android.graphics.Bitmap icon = android.graphics.Bitmap.createBitmap(size, size,
+                android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas canvas = new android.graphics.Canvas(icon);
+        canvas.rotate(heading, size / 2f, size / 2f);
+        drawable.setBounds((size - w) / 2, (size - h) / 2, (size + w) / 2, (size + h) / 2);
+        drawable.draw(canvas);
+        return new Marker(at, AndroidGraphicFactory.convertToBitmap(
+                new BitmapDrawable(context.getResources(), icon)), 0, 0);
+    }
+
+    void setHazardListener(Consumer<Hazard> listener) {
+        hazardTap = listener;
+    }
+
+    /** نشانه دوربین‌ها و سرعت‌گیرهای نزدیک. */
+    void showHazards(List<Hazard> list) {
+        hazards = list;
+        for (Layer l : hazardLayers) {
+            view.getLayerManager().getLayers().remove(l);
+        }
+        hazardLayers.clear();
+        for (int i = 0; i < Math.min(80, list.size()); i++) {
+            Hazard h = list.get(i);
+            Drawable drawable = context.getDrawable(h.type == Hazard.CAMERA
+                    ? R.drawable.hazard_camera : R.drawable.hazard_bump);
+            int w = drawable.getIntrinsicWidth();
+            int height = drawable.getIntrinsicHeight();
+            android.graphics.Bitmap icon = android.graphics.Bitmap.createBitmap(w, height,
+                    android.graphics.Bitmap.Config.ARGB_8888);
+            drawable.setBounds(0, 0, w, height);
+            drawable.draw(new android.graphics.Canvas(icon));
+            Upright placed = upright(icon);
+            float reach = height / 2f;
+            add(hazardLayers, new Marker(new LatLong(h.lat, h.lon), placed.bitmap, placed.dx, placed.dy) {
+                @Override
+                public boolean onTap(LatLong tapLatLong, org.mapsforge.core.model.Point layerXY,
+                                     org.mapsforge.core.model.Point tapXY) {
+                    double turn = Math.toRadians(-iconAngle);
+                    double x = layerXY.x + reach * Math.sin(turn);
+                    double y = layerXY.y - reach * Math.cos(turn);
+                    if (hazardTap != null && Math.hypot(tapXY.x - x, tapXY.y - y) <= reach * 1.3) {
+                        hazardTap.accept(h);
+                        return true;
+                    }
+                    return false;
+                }
+            });
+        }
+        redraw();
     }
 
     /** خط‌چین راهنما از آدمک تا نقطه هدف؛ null یعنی خاموش. */
@@ -407,7 +494,7 @@ final class MapScreen {
             fill.setStyle(Style.FILL);
             halo = new Circle(at, accuracy, fill, paint(0xAA2196F3, 1));
             // پای آدمک روی خود نقطه قرار می‌گیرد
-            me = personMarker(at);
+            me = meMarker(at);
             view.getLayerManager().getLayers().add(halo);
             view.getLayerManager().getLayers().add(me);
         } else {

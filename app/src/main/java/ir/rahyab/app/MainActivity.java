@@ -27,6 +27,7 @@ import android.view.ViewConfiguration;
 import android.view.WindowManager;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
@@ -70,6 +71,8 @@ public class MainActivity extends Activity implements LocationListener {
     private String mapMessage;
     private int ticks;
     private RotatingFrame frame;
+    private DriveAssistant drive;
+    private boolean car;
     private boolean headingUp;
     private Point target;           // نقطه‌ای که به سمت آن راهنمایی می‌شود
     private Averager averager;      // فقط وقتی پنجره ذخیره نقطه باز است
@@ -127,7 +130,15 @@ public class MainActivity extends Activity implements LocationListener {
         locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
 
         click(R.id.startStop, v -> toggleTracking());
-        click(R.id.savePoint, v -> savePoint());
+        click(R.id.savePoint, v -> {
+            if (!car) {
+                savePoint();
+            } else if (fresh() && isGps(lastFix)) {
+                drive.report(lastFix);
+            } else {
+                toast("هنوز موقعیت تازه‌ای از GPS دریافت نشده است");
+            }
+        });
         click(R.id.points, v -> showPoints());
         click(R.id.tracks, v -> showTracks());
         click(R.id.maps, v -> showMapMenu());
@@ -159,6 +170,8 @@ public class MainActivity extends Activity implements LocationListener {
             }
         });
         map.setWaypointListener(this::pointMenu);
+        drive = new DriveAssistant(this, map);
+        click(R.id.mode, v -> chooseMode());
         satellites = new GnssStatus.Callback() {
             @Override
             public void onSatelliteStatusChanged(GnssStatus status) {
@@ -187,6 +200,7 @@ public class MainActivity extends Activity implements LocationListener {
         layer = TrackingService.prefs(this).getString("layer", "sentinel");
         applyLayer();
         map.showWaypoints(Db.get(this).waypoints());
+        applyMode(TrackingService.prefs(this).getBoolean("car", false));
         if (!hasLocationPermission()) {
             askPermission();
         }
@@ -231,6 +245,7 @@ public class MainActivity extends Activity implements LocationListener {
 
     @Override
     protected void onDestroy() {
+        drive.destroy();
         map.destroy();
         super.onDestroy();
     }
@@ -247,9 +262,13 @@ public class MainActivity extends Activity implements LocationListener {
         if (averager != null && isGps(l) && fresh() && averager.add(TrackingService.toPoint(l))) {
             averaging.run();
         }
-        // هنگام حرکت، نقشه رو به جلو می‌چرخد
-        if (headingUp && isGps(l) && l.hasBearing() && l.getSpeed() > 0.8f) {
+        // هنگام حرکت، نقشه رو به جلو می‌چرخد؛ تغییرهای ریز نادیده گرفته می‌شوند
+        if (headingUp && isGps(l) && l.hasBearing() && l.getSpeed() > (car ? 2f : 0.8f)
+                && Math.abs(RotatingFrame.normalize(-l.getBearing() - frame.angle())) > 6) {
             frame.rotateTo(-l.getBearing());
+        }
+        if (isGps(l)) {
+            drive.onLocation(l, fresh());
         }
         // سر خط فقط با موقعیت دقیق GPS دنبال آدمک می‌رود
         map.setLiveTail(recordingShown() && isGps(l) && l.getAccuracy() <= TrackFilter.MAX_ACCURACY);
@@ -270,6 +289,40 @@ public class MainActivity extends Activity implements LocationListener {
 
     @Override
     public void onProviderDisabled(String provider) { }
+
+    // ---------- حالت پیاده و ماشین ----------
+
+    private void chooseMode() {
+        new Sheet(this, "حالت حرکت", null)
+                .row("🚶", "پیاده", car ? null : "✓ فعال", () -> switchMode(false))
+                .row("🚗", "ماشین", car ? "✓ فعال" : "سرعت‌سنج، هشدار دوربین و سرعت‌گیر", () -> switchMode(true))
+                .show();
+    }
+
+    private void switchMode(boolean toCar) {
+        if (toCar == car) {
+            return;
+        }
+        TrackingService.prefs(this).edit().putBoolean("car", toCar).apply();
+        applyMode(toCar);
+        follow = true;
+        if (lastFix != null) {
+            map.center(lastFix.getLatitude(), lastFix.getLongitude(), closeZoom());
+        }
+        toast(toCar ? "حالت ماشین" : "حالت پیاده");
+    }
+
+    private void applyMode(boolean toCar) {
+        car = toCar;
+        headingUp = toCar;
+        if (!toCar) {
+            frame.rotateTo(0);
+        }
+        ((ImageView) findViewById(R.id.mode)).setImageResource(toCar ? R.drawable.ic_car : R.drawable.ic_walk);
+        ((Button) findViewById(R.id.savePoint)).setText(toCar ? "⚠ گزارش خطر" : "📍 ذخیره مختصات");
+        map.setVehicle(toCar);
+        drive.setActive(toCar, lastFix != null && isGps(lastFix) ? lastFix : null);
+    }
 
     /** لمس قطب‌نما: اگر نقشه چرخیده شمال بالا؛ وگرنه جهت حرکت بالا. */
     private void toggleCompass() {
@@ -369,6 +422,9 @@ public class MainActivity extends Activity implements LocationListener {
         double distance = track == null ? 0 : track.distance;
         long time = track == null ? 0
                 : (track.finish == 0 ? System.currentTimeMillis() : track.finish) - track.start;
+        if (!fresh()) {
+            drive.onSignalLost();
+        }
         text(R.id.distance, Geo.length(distance));
         text(R.id.duration, Geo.duration(time));
         float kmh = fresh() && lastFix.hasSpeed() ? lastFix.getSpeed() * 3.6f : 0;
@@ -795,7 +851,7 @@ public class MainActivity extends Activity implements LocationListener {
     // ---------- درباره ما ----------
 
     private void showAbout() {
-        new Sheet(this, "رهیاب — نسخه ۳٫۱", "برنامه‌نویس: عباس رضایی")
+        new Sheet(this, "رهیاب — نسخه ۴", "برنامه‌نویس: عباس رضایی")
                 .row("📞", "تماس با پشتیبانی", "\u200E09118655135",
                         () -> view("tel:09118655135", Intent.ACTION_DIAL))
                 .row("📸", "اینستاگرام", "\u200Eabbas.rezaeii",
