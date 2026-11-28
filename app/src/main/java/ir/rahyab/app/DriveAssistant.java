@@ -86,7 +86,7 @@ final class DriveAssistant {
         }
         AlertEngine.Alert alert = Float.isNaN(bearing) ? null
                 : engine.update(near, l.getLatitude(), l.getLongitude(), bearing, metersPerSecond);
-        speed(Math.round(metersPerSecond * 3.6f));
+        speed((int) Math.round(metersPerSecond * 3.6));
         TextView banner = (TextView) view(R.id.alert);
         if (alert == null) {
             banner.setVisibility(View.GONE);
