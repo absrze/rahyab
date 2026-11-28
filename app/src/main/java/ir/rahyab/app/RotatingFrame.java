@@ -1,5 +1,7 @@
 package ir.rahyab.app;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.content.Context;
 import android.util.AttributeSet;
@@ -13,6 +15,9 @@ public class RotatingFrame extends FrameLayout {
 
     interface Listener {
         void rotated(float degrees, boolean byUser);
+
+        /** true هنگام شروع چرخش و false پس از پایان آن. */
+        void rotating(boolean active);
     }
 
     private Listener listener;
@@ -21,6 +26,7 @@ public class RotatingFrame extends FrameLayout {
     private float startAngle;
     private float lastAngle;
     private boolean rotating;
+    private boolean busy;
 
     public RotatingFrame(Context context, AttributeSet attrs) {
         super(context, attrs);
@@ -66,7 +72,7 @@ public class RotatingFrame extends FrameLayout {
     public boolean dispatchTouchEvent(MotionEvent e) {
         int action = e.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
-            rotating = false;
+            finishGesture();
         } else if (action == MotionEvent.ACTION_POINTER_DOWN && e.getPointerCount() == 2) {
             startAngle = fingers(e);
             lastAngle = startAngle;
@@ -75,18 +81,44 @@ public class RotatingFrame extends FrameLayout {
             if (!rotating && Math.abs(normalize(now - startAngle)) > THRESHOLD) {
                 rotating = true;
                 lastAngle = now;
+                stopAnimation();
+                setBusy(true);
                 // زوم و جابه‌جایی نقشه تا برداشتن انگشت‌ها متوقف شود
                 MotionEvent cancel = MotionEvent.obtain(e);
                 cancel.setAction(MotionEvent.ACTION_CANCEL);
                 super.dispatchTouchEvent(cancel);
                 cancel.recycle();
             } else if (rotating) {
-                stopAnimation();
                 apply(angle + normalize(now - lastAngle), true);
                 lastAngle = now;
             }
         }
+        if (rotating && (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL)) {
+            finishGesture();
+            return true;
+        }
         return rotating || super.dispatchTouchEvent(e);
+    }
+
+    private void finishGesture() {
+        if (rotating) {
+            rotating = false;
+            setBusy(false);
+        }
+    }
+
+    /** هنگام چرخش، نقشه یک تصویر آماده روی پردازنده گرافیکی است و فقط چرخانده می‌شود. */
+    private void setBusy(boolean active) {
+        if (busy == active) {
+            return;
+        }
+        busy = active;
+        for (int i = 0; i < getChildCount(); i++) {
+            getChildAt(i).setLayerType(active ? LAYER_TYPE_HARDWARE : LAYER_TYPE_NONE, null);
+        }
+        if (listener != null) {
+            listener.rotating(active);
+        }
     }
 
     private static float fingers(MotionEvent e) {
@@ -120,12 +152,28 @@ public class RotatingFrame extends FrameLayout {
         stopAnimation();
         float from = angle;
         float change = normalize(degrees - from);
+        if (rotating) {
+            return;     // انگشت کاربر اولویت دارد
+        }
         if (Math.abs(change) < 1) {
             apply(degrees, false);
+            if (listener != null) {
+                listener.rotating(false);
+            }
             return;
         }
+        setBusy(true);
         animator = ValueAnimator.ofFloat(0f, 1f);
         animator.setDuration(400);
+        animator.addListener(new AnimatorListenerAdapter() {
+            @Override
+            public void onAnimationEnd(Animator ended) {
+                // هنگام لغو هم صدا زده می‌شود
+                if (!rotating) {
+                    setBusy(false);
+                }
+            }
+        });
         animator.addUpdateListener(a -> apply(from + change * (float) a.getAnimatedValue(), false));
         animator.start();
     }

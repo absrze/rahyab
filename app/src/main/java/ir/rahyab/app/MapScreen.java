@@ -59,13 +59,14 @@ final class MapScreen {
     private LatLong target;
     private float angle;
     private float iconAngle;
+    private boolean paused;         // هنگام چرخش، نقشه دوباره رسم نمی‌شود
 
     MapScreen(Context context, MapView view) {
         this.context = context;
         this.view = view;
         // خط‌کش داخلی در نقشه چرخان بیرون صفحه می‌افتد
         view.getMapScaleBar().setVisible(false);
-        view.getModel().frameBufferModel.setOverdrawFactor(1.1);
+        view.getModel().frameBufferModel.setOverdrawFactor(1.0);
         view.setBuiltInZoomControls(false);
         view.setCenter(new LatLong(35.6892, 51.3890));
         view.setZoomLevel((byte) 6);
@@ -91,17 +92,17 @@ final class MapScreen {
         for (TileProvider provider : providers) {
             SatelliteLayer layer = new SatelliteLayer(provider);
             view.getLayerManager().getLayers().add(satellite.size(), layer);
-            layer.setRedraw(() -> view.getLayerManager().redrawLayers());
+            layer.setRedraw(this::redraw);
             satellite.add(layer);
         }
-        view.getLayerManager().redrawLayers();
+        redraw();
     }
 
     /** وقتی کاشی‌ای ناموفق مانده، دوباره رسم می‌کند تا تلاش تازه انجام شود. */
     void retryTiles() {
         for (SatelliteLayer layer : satellite) {
             if (layer.hasFailures()) {
-                view.getLayerManager().redrawLayers();
+                redraw();
                 return;
             }
         }
@@ -120,7 +121,7 @@ final class MapScreen {
                 AndroidGraphicFactory.INSTANCE);
         base.setXmlRenderTheme(MapsforgeThemes.MOTORIDER);
         view.getLayerManager().getLayers().add(0, base);
-        view.getLayerManager().redrawLayers();
+        redraw();
     }
 
     void center(double lat, double lon, int zoom) {
@@ -146,7 +147,7 @@ final class MapScreen {
         core = null;
         start = null;
         end = null;
-        view.getLayerManager().redrawLayers();
+        redraw();
     }
 
     /** نقاط تازه را به خط اضافه می‌کند. finished یعنی پرچم مقصد هم رسم شود. */
@@ -175,7 +176,7 @@ final class MapScreen {
             }
             end.setLatLong(last);
         }
-        view.getLayerManager().redrawLayers();
+        redraw();
     }
 
     void setWaypointListener(Consumer<Point> listener) {
@@ -192,26 +193,35 @@ final class MapScreen {
         for (Point p : points) {
             add(wayLayers, pin(p));
         }
-        view.getLayerManager().redrawLayers();
+        redraw();
     }
 
-    /** آیکون‌ها هنگام چرخش نقشه ایستاده می‌مانند. */
     void setAngle(float degrees) {
         angle = degrees;
-        if (Math.abs(RotatingFrame.normalize(angle - iconAngle)) < 5 && angle != 0) {
+    }
+
+    /** پس از پایان چرخش، آیکون‌ها یک بار ایستاده و نقشه دوباره رسم می‌شود. */
+    void setRotating(boolean active) {
+        paused = active;
+        if (active) {
             return;
         }
-        if (angle == iconAngle) {
-            return;
+        if (Math.abs(RotatingFrame.normalize(angle - iconAngle)) >= 1) {
+            iconAngle = angle;
+            showWaypoints(waypoints);
+            if (me != null) {
+                view.getLayerManager().getLayers().remove(me);
+                me = personMarker(shown);
+                view.getLayerManager().getLayers().add(me);
+            }
         }
-        iconAngle = angle;
-        showWaypoints(waypoints);
-        if (me != null) {
-            view.getLayerManager().getLayers().remove(me);
-            me = personMarker(shown);
-            view.getLayerManager().getLayers().add(me);
+        redraw();
+    }
+
+    private void redraw() {
+        if (!paused) {
+            view.getLayerManager().redrawLayers();
         }
-        view.getLayerManager().redrawLayers();
     }
 
     /** خط‌چین راهنما از آدمک تا نقطه هدف؛ null یعنی خاموش. */
@@ -229,7 +239,7 @@ final class MapScreen {
             add(new ArrayList<>(), guide);
             drawGuide();
         }
-        view.getLayerManager().redrawLayers();
+        redraw();
     }
 
     private void drawGuide() {
@@ -360,7 +370,7 @@ final class MapScreen {
         if (liveTail != on) {
             liveTail = on;
             drawLine();
-            view.getLayerManager().redrawLayers();
+            redraw();
         }
     }
 
@@ -409,10 +419,10 @@ final class MapScreen {
             drawLine();
         }
         drawGuide();
-        if (follow) {
+        if (follow && !paused) {
             view.setCenter(at);
         }
-        view.getLayerManager().redrawLayers();
+        redraw();
     }
 
     /** کل مسیر از مبدأ تا مقصد را در صفحه جا می‌دهد. */

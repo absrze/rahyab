@@ -142,12 +142,21 @@ public class MainActivity extends Activity implements LocationListener {
             refresh();
         });
         frame = findViewById(R.id.frame);
-        frame.setListener((degrees, byUser) -> {
-            if (byUser) {
-                headingUp = false;
+        CompassView compass = findViewById(R.id.compass);
+        frame.setListener(new RotatingFrame.Listener() {
+            @Override
+            public void rotated(float degrees, boolean byUser) {
+                if (byUser) {
+                    headingUp = false;
+                }
+                compass.setAngle(degrees);
+                map.setAngle(degrees);
             }
-            ((CompassView) findViewById(R.id.compass)).setAngle(degrees);
-            map.setAngle(degrees);
+
+            @Override
+            public void rotating(boolean active) {
+                map.setRotating(active);
+            }
         });
         map.setWaypointListener(this::pointMenu);
         satellites = new GnssStatus.Callback() {
@@ -786,7 +795,7 @@ public class MainActivity extends Activity implements LocationListener {
     // ---------- درباره ما ----------
 
     private void showAbout() {
-        new Sheet(this, "رهیاب — نسخه ۳", "برنامه‌نویس: عباس رضایی")
+        new Sheet(this, "رهیاب — نسخه ۳٫۱", "برنامه‌نویس: عباس رضایی")
                 .row("📞", "تماس با پشتیبانی", "\u200E09118655135",
                         () -> view("tel:09118655135", Intent.ACTION_DIAL))
                 .row("📸", "اینستاگرام", "\u200Eabbas.rezaeii",
